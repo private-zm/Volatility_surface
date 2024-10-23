@@ -6,4 +6,6 @@ scipy
 plotly
 requests
 schedule
+datetime
 time
+plotly.graph_objects
