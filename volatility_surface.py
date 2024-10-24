@@ -8,20 +8,41 @@ from scipy.optimize import brentq
 from scipy.interpolate import griddata
 import plotly.graph_objects as go
 
-st.markdown(
-    """
-    <style>
-    .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob,
-    .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137,
-    .viewerBadge_text__1JaDK {
-        display: none;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
+st.set_page_config(
+    page_title="Implied Volatility Surface",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.title('Implied Volatility Surface')
+# Custom CSS with hidden GitHub link and footer
+st.markdown("""
+    <style>
+    .main { padding: 0rem 1rem; }
+    .stAlert { padding: 0.5rem; margin: 0.5rem 0; }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    .trade-info {
+        font-size: 1.2rem;
+        font-weight: bold;
+        margin: 1rem 0;
+    }
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    /* Hide GitHub Icon/Link */
+    .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob, .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137, .viewerBadge_text__1JaDK {
+        display: none !important;
+    }
+    /* Hide "Made with Streamlit" */
+    .styles_viewerBadge__1yB5_ {
+        display: none !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 def bs_call_price(S, K, T, r, sigma, q=0):
     d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
