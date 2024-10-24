@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
+import pandas_ta as ta
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from scipy import stats
-import talib as ta  # Import TA-Lib
 
 # Initialize session state variables
 if 'portfolio_value' not in st.session_state:
@@ -61,20 +61,44 @@ class QuantBot:
             return None
 
     def calculate_indicators(self, df):
-        """Calculate advanced technical and statistical indicators using TA-Lib"""
+        """Calculate advanced technical and statistical indicators using pandas-ta"""
         if df is None or df.empty:
             return None
+
+        # Create custom strategy with multiple indicators
+        strategy = ta.Strategy(
+            name="Multi_Factor_Strategy",
+            ta=[
+                {"kind": "sma", "length": 20},
+                {"kind": "sma", "length": 50},
+                {"kind": "rsi"},
+                {"kind": "macd", "fast": 12, "slow": 26, "signal": 9},
+                {"kind": "bbands", "length": 20, "std": 2},
+                {"kind": "obv"},
+                {"kind": "adx"},
+                {"kind": "atr"},
+                {"kind": "mom", "length": 10},
+            ]
+        )
         
-        # Calculate technical indicators using TA-Lib
-        df['SMA_20'] = ta.SMA(df['Close'], timeperiod=20)
-        df['SMA_50'] = ta.SMA(df['Close'], timeperiod=50)
-        df['RSI'] = ta.RSI(df['Close'], timeperiod=14)
-        df['MACD'], df['Signal_Line'], _ = ta.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
-        df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = ta.BBANDS(df['Close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
-        df['OBV'] = ta.OBV(df['Close'], df['Volume'])
-        df['ADX'] = ta.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df['ATR'] = ta.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df['MOM'] = ta.MOM(df['Close'], timeperiod=10)
+        # Calculate technical indicators
+        df.ta.strategy(strategy)
+        
+        # Rename columns for consistency
+        df.rename(columns={
+            'SMA_20': 'SMA_20',
+            'SMA_50': 'SMA_50',
+            'RSI_14': 'RSI',
+            'MACD_12_26_9': 'MACD',
+            'MACDs_12_26_9': 'Signal_Line',
+            'BBU_20_2.0': 'BB_Upper',
+            'BBM_20_2.0': 'BB_Middle',
+            'BBL_20_2.0': 'BB_Lower',
+            'OBV': 'OBV',
+            'ADX_14': 'ADX',
+            'ATRr_14': 'ATR',
+            'MOM_10': 'MOM'
+        }, inplace=True)
         
         # Statistical indicators
         df['Returns'] = df['Close'].pct_change()
@@ -148,7 +172,7 @@ class QuantBot:
         if avg_loss == 0:
             kelly_fraction = 0.1  # Conservative default
         else:
-            kelly_fraction = max(0.1, min(0.5, (win_rate - ((1 - win_rate) / (avg_win / avg_loss if avg_win else 1)))))
+            kelly_fraction = max(0.1, min(0.5, (win_rate - ((1 - win_rate) / (avg_win/avg_loss if avg_win else 1)))))
         
         # Volatility adjustment
         vol_adjustment = max(0.2, min(1.0, 1.0 / (volatility * 10))) if volatility > 0 else 0.5
@@ -208,27 +232,199 @@ class QuantBot:
             st.session_state.positions = self.positions
             
             profit_color = "🟢" if profit > 0 else "🔴"
-            st.success(f"{profit_color} SELL {symbol}: {position['quantity']} shares at ${price:.2f} for a profit of ${profit:.2f}")
-
-        self.last_signals[symbol] = signal
-
-    def run_bot(self, symbol):
-        """Main logic to run the trading bot"""
-        if not st.session_state.bot_running:
-            st.session_state.bot_running = True
-            st.success("Trading bot is running...")
+            st.success(f"{profit_color} SELL {symbol}: {position['quantity']} shares at ${price:.2f} (Profit: ${profit:.2f})")
         
-        data = self.fetch_data(symbol)
-        data = self.calculate_indicators(data)
-        data = self.generate_signals(data)
+        self.last_signals[symbol] = signal
+        self.update_portfolio_value(symbol, price)
 
-        if data is not None and not data.empty:
-            latest_data = data.iloc[-1]
-            self.execute_trade(symbol, latest_data['Signal'], latest_data['Close'], latest_data.name, latest_data['Volatility'])
+    def update_portfolio_value(self, symbol, current_price):
+        """Update portfolio value including all positions"""
+        portfolio_value = st.session_state.cash_balance
+        
+        for sym, pos in self.positions.items():
+            price = current_price if sym == symbol else self.fetch_data(sym, interval="1m", period="1d")['Close'].iloc[-1]
+            portfolio_value += pos['quantity'] * price
+            
+        st.session_state.portfolio_value = portfolio_value
 
-# Streamlit user interface
-st.title("Quantitative Trading Bot")
-symbol_input = st.text_input("Enter a stock symbol (e.g., AAPL):", "AAPL")
-if st.button("Start Trading"):
+def calculate_performance_metrics():
+    """Calculate comprehensive trading performance metrics"""
+    if not st.session_state.trades:
+        return None
+        
+    trades_df = pd.DataFrame(st.session_state.trades)
+    trades_df['Profit'] = trades_df['Profit'].fillna(0)
+    
+    # Basic metrics
+    total_trades = len(trades_df)
+    profitable_trades = len(trades_df[trades_df['Profit'] > 0])
+    win_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0
+    total_profit = trades_df['Profit'].sum()
+    avg_profit = trades_df['Profit'].mean() if total_trades > 0 else 0
+    
+    # Risk metrics
+    trades_df['Balance'] = trades_df['Balance'].fillna(method='ffill')
+    trades_df['Peak'] = trades_df['Balance'].expanding().max()
+    trades_df['Drawdown'] = (trades_df['Balance'] - trades_df['Peak']) / trades_df['Peak'] * 100
+    max_drawdown = abs(trades_df['Drawdown'].min())
+    
+    # Calculate Sharpe Ratio (annualized)
+    if len(trades_df) > 1:
+        returns = trades_df['Profit'] / trades_df['Total'].shift(1)
+        sharpe = np.sqrt(252) * (returns.mean() / returns.std()) if returns.std() != 0 else 0
+    else:
+        sharpe = 0
+        
+    # Calculate Sortino Ratio (annualized)
+    negative_returns = returns[returns < 0] if len(trades_df) > 1 else pd.Series([0])
+    sortino = np.sqrt(252) * (returns.mean() / negative_returns.std()) if len(negative_returns) > 1 and negative_returns.std() != 0 else 0
+    
+    return {
+        'total_trades': total_trades,
+        'win_rate': win_rate,
+        'total_profit': total_profit,
+        'avg_profit': avg_profit,
+        'max_drawdown': max_drawdown,
+        'sharpe_ratio': sharpe,
+        'sortino_ratio': sortino
+    }
+
+def main():
+    st.title("📊 Quantitative Trading Bot")
+    
+    # Sidebar configuration
+    with st.sidebar:
+        st.header("Trading Configuration")
+        symbols = st.text_input("Stock Symbols (comma-separated)", "AAPL,MSFT,GOOGL").upper().split(',')
+        symbols = [s.strip() for s in symbols]
+        
+        interval = st.selectbox("Time Interval", 
+                              ["1m", "2m", "5m", "15m", "30m", "60m", "90m"],
+                              index=2)
+        
+        period = st.selectbox("Analysis Period",
+                            ["1d", "5d", "1mo", "3mo"],
+                            index=1)
+        
+        st.divider()
+        
+        # Risk Management
+        st.subheader("Risk Management")
+        max_position_size = st.slider("Max Position Size (%)", 1, 20, 5)
+        stop_loss = st.slider("Stop Loss (%)", 1, 10, 5)
+        take_profit = st.slider("Take Profit (%)", 5, 20, 10)
+        
+        # Trading toggle
+        auto_trading = st.toggle("Enable Auto-Trading", value=False)
+        
+        if st.button("Start Bot", type="primary"):
+            st.session_state.bot_running = True
+            st.success("Bot started!")
+        if st.button("Stop Bot", type="secondary"):
+            st.session_state.bot_running = False
+            st.info("Bot stopped!")
+
+    # Initialize trading bot
     bot = QuantBot()
-    bot.run_bot(symbol_input)
+    
+    # Create tabs
+    tab1, tab2, tab3 = st.tabs(["📈 Trading Dashboard", "📝 Trade Log", "📊 Performance"])
+    
+    # Portfolio metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Portfolio Value", f"${st.session_state.portfolio_value:,.2f}")
+    with col2:
+        st.metric("Cash Balance", f"${st.session_state.cash_balance:,.2f}")
+    with col3:
+        positions_value = sum(pos['quantity'] * bot.fetch_data(sym, interval="1m", period="1d")['Close'].iloc[-1]
+                            for sym, pos in st.session_state.positions.items()) if st.session_state.positions else 0
+        st.metric("Positions Value", f"${positions_value:,.2f}")
+    
+    with tab1:
+        for symbol in symbols:
+            st.subheader(f"{symbol} Analysis")
+            
+            # Fetch and process data
+            df = bot.fetch_data(symbol, interval, period)
+            if df is not None:
+                df = bot.calculate_indicators(df)
+                df = bot.generate_signals(df)
+                
+                # Create interactive chart
+                                # Create interactive chart
+                fig = go.Figure()
+
+                # Add candlestick chart
+                fig.add_trace(go.Candlestick(
+                    x=df.index,
+                    open=df['Open'],
+                    high=df['High'],
+                    low=df['Low'],
+                    close=df['Close'],
+                    name='Candlesticks',
+                    increasing_line_color='green', decreasing_line_color='red'
+                ))
+
+                # Add moving averages (SMA)
+                fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], line=dict(color='blue', width=1.5), name='SMA 20'))
+                fig.add_trace(go.Scatter(x=df.index, y=df['SMA_50'], line=dict(color='orange', width=1.5), name='SMA 50'))
+
+                # Buy and Sell Signals
+                buy_signals = df[df['Signal'] == 1]
+                sell_signals = df[df['Signal'] == -1]
+
+                fig.add_trace(go.Scatter(x=buy_signals.index, y=buy_signals['Close'], mode='markers', 
+                                         marker=dict(color='green', size=10, symbol='triangle-up'), name='Buy Signal'))
+
+                fig.add_trace(go.Scatter(x=sell_signals.index, y=sell_signals['Close'], mode='markers', 
+                                         marker=dict(color='red', size=10, symbol='triangle-down'), name='Sell Signal'))
+
+                # Add layout options
+                fig.update_layout(
+                    title=f'{symbol} Stock Price',
+                    xaxis_title='Time',
+                    yaxis_title='Price',
+                    height=600,
+                    showlegend=True
+                )
+
+                # Display chart
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Auto-trading logic
+                if st.session_state.bot_running:
+                    # Execute trades based on the latest signal
+                    latest_signal = df['Signal'].iloc[-1]
+                    latest_price = df['Close'].iloc[-1]
+                    latest_volatility = df['Volatility'].iloc[-1]
+                    timestamp = df.index[-1]
+
+                    bot.execute_trade(symbol, latest_signal, latest_price, timestamp, latest_volatility)
+
+    with tab2:
+        # Display trade log
+        st.subheader("Trade Log")
+        if st.session_state.trades:
+            trades_df = pd.DataFrame(st.session_state.trades)
+            st.dataframe(trades_df)
+        else:
+            st.info("No trades executed yet.")
+    
+    with tab3:
+        # Display performance metrics
+        st.subheader("Performance Metrics")
+        performance_metrics = calculate_performance_metrics()
+        if performance_metrics:
+            st.write(f"Total Trades: {performance_metrics['total_trades']}")
+            st.write(f"Win Rate: {performance_metrics['win_rate']:.2f}%")
+            st.write(f"Total Profit: ${performance_metrics['total_profit']:.2f}")
+            st.write(f"Average Profit: ${performance_metrics['avg_profit']:.2f}")
+            st.write(f"Max Drawdown: {performance_metrics['max_drawdown']:.2f}%")
+            st.write(f"Sharpe Ratio: {performance_metrics['sharpe_ratio']:.2f}")
+            st.write(f"Sortino Ratio: {performance_metrics['sortino_ratio']:.2f}")
+        else:
+            st.info("No performance data available yet.")
+
+if __name__ == '__main__':
+    main()
