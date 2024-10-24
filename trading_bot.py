@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import requests
+import yfinance as yf
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Initialize session state variables
 if 'portfolio_value' not in st.session_state:
@@ -16,19 +16,17 @@ if 'trades' not in st.session_state:
     st.session_state.trades = []
 if 'last_update' not in st.session_state:
     st.session_state.last_update = None
-if 'api_key' not in st.session_state:
-    st.session_state.api_key = None
 if 'bot_running' not in st.session_state:
     st.session_state.bot_running = False
 
 # Page configuration
 st.set_page_config(
-    page_title="Advanced Trading Bot",
+    page_title="Trading Bot",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS with hidden GitHub link and footer
+# Custom CSS
 st.markdown("""
     <style>
     .main { padding: 0rem 1rem; }
@@ -47,49 +45,46 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    /* Hide GitHub Icon/Link */
-    .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob, .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137, .viewerBadge_text__1JaDK {
-        display: none !important;
-    }
-    /* Hide "Made with Streamlit" */
-    .styles_viewerBadge__1yB5_ {
-        display: none !important;
-    }
     </style>
 """, unsafe_allow_html=True)
 
 class TradingBot:
-    def __init__(self, api_key):
-        self.api_key = api_key
+    def __init__(self):
         self.last_signal = 0
         self.last_trade_price = None
         self.position_open = False
 
-    def fetch_data(self, symbol, interval="5min"):
-        """Fetch stock data with error handling and caching"""
-        if not self.api_key:
-            st.error("Please enter your Alpha Vantage API key in the sidebar.")
-            return None
-            
+    def fetch_data(self, symbol, interval="5m"):
+        """Fetch stock data using yfinance"""
         try:
-            @st.cache_data(ttl=60)
-            def _fetch_data(symbol, interval, api_key):
-                url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&apikey={api_key}&outputsize=compact"
-                response = requests.get(url)
-                data = response.json()
+            # Convert interval to yfinance format
+            interval_mapping = {
+                "1min": "1m",
+                "5min": "5m",
+                "15min": "15m",
+                "30min": "30m",
+                "60min": "1h"
+            }
+            yf_interval = interval_mapping.get(interval, "5m")
+            
+            # Calculate start date based on interval
+            periods = {
+                "1m": "1d",
+                "5m": "5d",
+                "15m": "5d",
+                "30m": "10d",
+                "1h": "30d"
+            }
+            
+            stock = yf.Ticker(symbol)
+            df = stock.history(period=periods[yf_interval], interval=yf_interval)
+            
+            if df.empty:
+                st.error("No data available for this symbol")
+                return None
                 
-                if "Time Series" in str(data.keys()):
-                    time_series_key = f"Time Series ({interval})"
-                    df = pd.DataFrame(data[time_series_key]).T
-                    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-                    df.index = pd.to_datetime(df.index)
-                    df = df.astype(float)
-                    return df
-                else:
-                    st.error("API limit reached or invalid symbol")
-                    return None
-                
-            return _fetch_data(symbol, interval, self.api_key)
+            return df
+            
         except Exception as e:
             st.error(f"Error fetching data: {str(e)}")
             return None
@@ -109,7 +104,7 @@ class TradingBot:
         # Generate trading signals
         df['Signal'] = 0
         
-        # Buy signals (multiple conditions)
+        # Buy signals
         buy_conditions = (
             (df['SMA_20'] > df['SMA_50']) &  # Golden cross
             (df['RSI'] < 70) &  # Not overbought
@@ -117,7 +112,7 @@ class TradingBot:
             (df['Close'] > df['SMA_20'])  # Price above short-term trend
         )
         
-        # Sell signals (multiple conditions)
+        # Sell signals
         sell_conditions = (
             (df['SMA_20'] < df['SMA_50']) |  # Death cross
             (df['RSI'] > 80) |  # Overbought
@@ -236,18 +231,15 @@ def calculate_performance_metrics():
         
     trades_df = pd.DataFrame(st.session_state.trades)
     
-    # Calculate profits for completed trades
     trades_df['Profit'] = trades_df['Profit'].fillna(0)
     
     total_trades = len(trades_df)
     profitable_trades = len(trades_df[trades_df['Profit'] > 0])
     win_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0
     
-    # Calculate profit metrics
     total_profit = trades_df['Profit'].sum()
     avg_profit = trades_df['Profit'].mean() if total_trades > 0 else 0
     
-    # Calculate drawdown
     trades_df['Balance'] = trades_df['Balance'].fillna(method='ffill')
     trades_df['Peak'] = trades_df['Balance'].expanding().max()
     trades_df['Drawdown'] = (trades_df['Balance'] - trades_df['Peak']) / trades_df['Peak'] * 100
@@ -262,17 +254,11 @@ def calculate_performance_metrics():
     }
 
 def main():
-    st.title("📈 Advanced Trading Bot")
+    st.title("📈 Trading Bot")
     
     # Sidebar configuration
     with st.sidebar:
         st.header("Configuration")
-        api_key = st.text_input("Alpha Vantage API Key", 
-                               value=st.session_state.api_key if st.session_state.api_key else "",
-                               type="password")
-        if api_key:
-            st.session_state.api_key = api_key
-            
         symbol = st.text_input("Stock Symbol", "AAPL").upper()
         interval = st.selectbox("Time Interval", 
                               ["1min", "5min", "15min", "30min", "60min"],
@@ -296,17 +282,8 @@ def main():
             st.session_state.bot_running = False
             st.info("Bot stopped!")
 
-    # Show API key instructions if not provided
-    if not st.session_state.api_key:
-        st.info("""
-        To use this trading bot, you need an Alpha Vantage API key. 
-        1. Get a free API key at: https://www.alphavantage.co/support/#api-key
-        2. Enter your API key in the sidebar
-        """)
-        st.stop()
-
     # Initialize trading bot
-    bot = TradingBot(st.session_state.api_key)
+    bot = TradingBot()
     
     # Create tabs
     tab1, tab2, tab3 = st.tabs(["📊 Trading Chart", "📝 Trade Log", "📈 Performance"])
@@ -382,6 +359,8 @@ def main():
             trades_df = pd.DataFrame(st.session_state.trades)
             trades_df['Timestamp'] = pd.to_datetime(trades_df['Timestamp'])
             trades_df = trades_df.sort_values('Timestamp', ascending=False)
+            
+            # Format the trades dataframe
             
             # Format the trades dataframe for display
             display_df = trades_df.copy()
