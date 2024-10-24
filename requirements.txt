@@ -8,3 +8,4 @@ requests
 schedule
 datetime
 pandas_ta
+backports
