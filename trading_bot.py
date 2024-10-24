@@ -28,14 +28,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS with hidden GitHub link and footer
 st.markdown("""
     <style>
     .main { padding: 0rem 1rem; }
-    .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob,
-    .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137,
-    .viewerBadge_text__1JaDK {
-        display: none;}
     .stAlert { padding: 0.5rem; margin: 0.5rem 0; }
     .metric-card {
         background-color: #f0f2f6;
@@ -47,6 +43,17 @@ st.markdown("""
         font-size: 1.2rem;
         font-weight: bold;
         margin: 1rem 0;
+    }
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    /* Hide GitHub Icon/Link */
+    .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob, .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137, .viewerBadge_text__1JaDK {
+        display: none !important;
+    }
+    /* Hide "Made with Streamlit" */
+    .styles_viewerBadge__1yB5_ {
+        display: none !important;
     }
     </style>
 """, unsafe_allow_html=True)
