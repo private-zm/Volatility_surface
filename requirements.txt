@@ -1,6 +1,6 @@
 streamlit
 yfinance
-numpy
+numpy>=1.21.0
 pandas
 scipy
 plotly
