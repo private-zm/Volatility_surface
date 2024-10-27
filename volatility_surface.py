@@ -260,5 +260,5 @@ else:
 
         st.write("---")
         st.markdown(
-            "Created by Zakaria MAGDOUL "  
+            " If you encounter an error, refresh the page, if you still have it, then the API is having issues collecting data , try again later.  \n Created by Zakaria MAGDOUL "  
         )
